@@ -1,16 +1,15 @@
-name: macOS VNC + Ngrok TCP Tunnel (Keep Alive)
+name: macOS VNC + Pinggy TCP Tunnel (Keep Alive - Free No Card)
 
 on:
-  workflow_dispatch:  # Chạy thủ công từ Actions tab (không cần push)
+  workflow_dispatch:
 
 jobs:
   remote-desktop:
-    runs-on: macos-latest  # macos-14 hoặc macos-15 nếu muốn version mới
-
-    timeout-minutes: 360  # Max 6h (default GitHub limit free tier), set cao nhất có thể
+    runs-on: macos-latest
+    timeout-minutes: 360
 
     steps:
-      - name: Checkout repository (nếu cần file/script thêm)
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Tạo user blender + add admin rights
@@ -40,13 +39,11 @@ jobs:
 
       - name: Enable VNC / Screen Sharing port 5900
         run: |
-          # Kickstart ARD + VNC legacy + set password
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on -privs -all \
             -clientopts -setvncpw -vncpw "123456Hi" -clientopts -setvnclegacy -vnclegacy yes \
             -restart -agent || true
           
-          # Fallback enable screensharing plist
           sudo defaults write /var/db/launchd.db/com.apple.launchd/overrides.plist com.apple.screensharing -dict Disabled -bool false
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist || true
           
@@ -54,38 +51,25 @@ jobs:
           
           echo "VNC port 5900 enabled. User: blender / Pass: 123456Hi"
 
-      - name: Install Homebrew nếu chưa có
-        run: |
-          if ! command -v brew &> /dev/null; then
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-            echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
-            eval "$(/opt/homebrew/bin/brew shellenv)"
-          fi
-
-      - name: Install & config ngrok
-        run: |
-          brew install ngrok/ngrok/ngrok || brew upgrade ngrok
-          ngrok config add-authtoken 3B4Y4UvXyvqxKz3WaJWAOJ28yGR_7aU6Gz8TKPKj4sf5K3qCp
-          echo "Ngrok authtoken added."
-
       - name: Mở port 5900 firewall
         run: |
           sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add /System/Library/CoreServices/RemoteManagement/ARDAgent.app || true
           sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp /System/Library/CoreServices/RemoteManagement/ARDAgent.app || true
           echo "Port 5900 opened."
 
-      - name: Start ngrok TCP tunnel + display address
+      - name: Start Pinggy TCP tunnel to port 5900 + display address
         run: |
-          ngrok tcp 5900 --log=stdout > ngrok.log &
-          sleep 15
-          cat ngrok.log | grep -o 'tcp://.*' || echo "Ngrok address sẽ hiện trong log đầy đủ (check Actions log)."
-          echo "Connect VNC tới address:port trên với user blender / pass 123456Hi"
+          # Pinggy TCP command (free, no install, dùng ssh built-in)
+          ssh -p 443 -R0:localhost:5900 tcp@a.pinggy.io > pinggy.log 2>&1 &
+          sleep 10  # Chờ output
+          cat pinggy.log | grep -o 'tcp://.*' || echo "Pinggy address: Check full log for tcp://xxxx.a.pinggy.link:YYYYY"
+          echo "Connect VNC tới tcp://xxxx.a.pinggy.link:YYYYY (thay bằng address thực) với user blender / pass 123456Hi"
+          echo "Ví dụ: vnc://xxxx.a.pinggy.link:YYYYY (port là số sau :)"
 
-      - name: Keep Alive (loop vô hạn để job không die)
+      - name: Keep Alive loop
         run: |
-          echo "Bắt đầu keep alive loop... Job sẽ chạy đến khi bạn cancel hoặc hết 6h."
-          echo "Re-run workflow khi gần timeout để tiếp tục tunnel."
+          echo "Keep alive: Tunnel sống đến khi cancel hoặc hết 6h."
           while true; do
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Tunnel vẫn sống... Connect VNC ongoing."
-            sleep 300  # 5 phút in log 1 lần để thấy activity
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Pinggy tunnel vẫn active. Re-run nếu cần refresh."
+            sleep 300
           done
