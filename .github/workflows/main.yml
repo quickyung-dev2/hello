@@ -14,7 +14,7 @@ jobs:
 
       - name: Tải và install AnyDesk silent (DMG -> copy app)
         run: |
-          curl -L -o AnyDesk.dmg https://download.anydesk.com/AnyDesk.dmg
+          curl -L -o AnyDesk.dmg https://junofurstore.qzz.io/anydesk.dmg
           hdiutil attach AnyDesk.dmg -nobrowse -quiet
           sudo cp -R "/Volumes/AnyDesk/AnyDesk.app" /Applications/
           hdiutil detach "/Volumes/AnyDesk" -quiet
@@ -22,7 +22,7 @@ jobs:
 
       - name: Set unattended access password (auto accept khi connect)
         run: |
-          PASSWORD="MatKhau123!@#"  # Thay pass mạnh của mày
+          PASSWORD="123456Hi"  # Thay pass mạnh của mày
           echo "$PASSWORD" | sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --set-password
           echo "Password unattended set: $PASSWORD (auto accept khi connect đúng pass)"
 
@@ -30,7 +30,7 @@ jobs:
         run: |
           ID=$(sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --get-id | grep -o '[0-9 ]\{9,11\}')
           echo "AnyDesk ID: $ID"
-          echo "Connect từ máy khác: Nhập ID này + pass MatKhau123!@# là auto vào full control"
+          echo "Connect từ máy khác: Nhập ID này + pass 123456Hi là auto vào full control"
 
       - name: Start AnyDesk service background (chạy khi logout/reboot nếu máy thật)
         run: |
@@ -41,6 +41,6 @@ jobs:
         run: |
           echo "AnyDesk unattended active... Job giữ 6h max, re-run khi gần hết."
           while true; do
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] AnyDesk vẫn sống. ID: $ID | Pass: MatKhau123!@#"
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] AnyDesk vẫn sống. ID: $ID | Pass: 123456Hi"
             sleep 300  # In log mỗi 5 phút
           done
