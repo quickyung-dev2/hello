@@ -14,7 +14,7 @@ jobs:
 
       - name: Tải và install AnyDesk silent (DMG -> copy app)
         run: |
-          curl -L -o AnyDesk.dmg https://junofurstore.qzz.io/anydesk.dmg
+          curl -L -o AnyDesk.dmg https://download.anydesk.com/anydesk.dmg
           hdiutil attach AnyDesk.dmg -nobrowse -quiet
           sudo cp -R "/Volumes/AnyDesk/AnyDesk.app" /Applications/
           hdiutil detach "/Volumes/AnyDesk" -quiet
