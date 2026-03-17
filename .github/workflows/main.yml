@@ -1,46 +1,61 @@
-name: macOS AnyDesk Unattended Access + Keep Alive
+name: macOS AnyDesk Unattended (Fix Service Connect)
 
 on:
-  workflow_dispatch:  # Chạy thủ công từ Actions tab
+  workflow_dispatch:
 
 jobs:
   anydesk-setup:
     runs-on: macos-latest
-    timeout-minutes: 360  # Max 6h free tier
+    timeout-minutes: 360
 
     steps:
-      - name: Checkout repo (nếu cần file thêm)
-        uses: actions/checkout@v4
-
-      - name: Tải và install AnyDesk silent (DMG -> copy app)
+      - name: Tải và install AnyDesk (force HTTP/1.1 tránh error cũ)
         run: |
-          curl -L -o AnyDesk.dmg https://download.anydesk.com/anydesk.dmg
+          curl --http1.1 -L --retry 10 --retry-delay 5 \
+            -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" \
+            https://download.anydesk.com/anydesk.dmg -o AnyDesk.dmg
+          
+          if [ ! -f AnyDesk.dmg ] || [ $(stat -f%z AnyDesk.dmg) -lt 60000000 ]; then
+            echo "Download fail"; exit 1
+          fi
+          
           hdiutil attach AnyDesk.dmg -nobrowse -quiet
           sudo cp -R "/Volumes/AnyDesk/AnyDesk.app" /Applications/
           hdiutil detach "/Volumes/AnyDesk" -quiet
-          echo "AnyDesk installed to /Applications/AnyDesk.app"
+          rm AnyDesk.dmg
+          echo "Installed OK"
 
-      - name: Set unattended access password (auto accept khi connect)
+      - name: Force start AnyDesk client (để init service)
         run: |
-          PASSWORD="123456Hi"  # Thay pass mạnh của mày
-          echo "$PASSWORD" | sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --set-password
-          echo "Password unattended set: $PASSWORD (auto accept khi connect đúng pass)"
+          # Start client background để service có thể connect
+          nohup /Applications/AnyDesk.app/Contents/MacOS/AnyDesk > anydesk.log 2>&1 &
+          sleep 15  # Chờ client init và connect server
+          cat anydesk.log || true
+          echo "Client started (check log nếu có error network)"
 
-      - name: Lấy AnyDesk ID (mã connect)
+      - name: Set unattended password (sau khi client chạy)
         run: |
-          ID=$(sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --get-id | grep -o '[0-9 ]\{9,11\}')
+          PASSWORD="MatKhau123!@#"
+          echo "$PASSWORD" | sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --set-password || {
+            echo "Set password fail (có thể do headless runner), nhưng thử continue..."
+            sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --set-password --verbose || true
+          }
+          echo "Password set: $PASSWORD (nếu fail thì manual sau)"
+
+      - name: Lấy AnyDesk ID (luôn chạy được)
+        run: |
+          ID=$(sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --get-id | grep -o '[0-9 ]\{9,11\}' || echo "ID not available yet")
           echo "AnyDesk ID: $ID"
-          echo "Connect từ máy khác: Nhập ID này + pass 123456Hi là auto vào full control"
+          echo "Nếu ID hiện, connect từ máy khác + pass là auto (nếu service sống)"
 
-      - name: Start AnyDesk service background (chạy khi logout/reboot nếu máy thật)
+      - name: Start service explicit (nếu có)
         run: |
           sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --service || true
-          echo "AnyDesk service started (background mode)"
+          echo "Service attempt done"
 
-      - name: Keep alive loop (giữ job sống để AnyDesk active)
+      - name: Keep alive
         run: |
-          echo "AnyDesk unattended active... Job giữ 6h max, re-run khi gần hết."
           while true; do
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] AnyDesk vẫn sống. ID: $ID | Pass: 123456Hi"
-            sleep 300  # In log mỗi 5 phút
+            echo "[$(date)] AnyDesk running. ID: $ID | Pass: MatKhau123!@#"
+            sleep 300
           done
