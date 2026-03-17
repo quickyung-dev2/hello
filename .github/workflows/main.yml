@@ -1,4 +1,4 @@
-name: macOS AnyDesk Unattended Access (Full Setup 2026)
+name: macOS AnyDesk Unattended Setup (Debug Headless 2026)
 
 on:
   workflow_dispatch:
@@ -6,68 +6,67 @@ on:
 jobs:
   anydesk-setup:
     runs-on: macos-latest
-    timeout-minutes: 360  # Max free tier
+    timeout-minutes: 360
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Tải anydesk.dmg (version 9.6.3 ~26.1MB)
+      - name: Tải anydesk.dmg (9.6.3 ~26.1MB)
         run: |
-          echo "Tải AnyDesk 9.6.3 dmg từ official..."
           curl --http1.1 -L --retry 10 --retry-delay 5 --retry-connrefused \
-            -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" \
+            -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" \
             https://download.anydesk.com/anydesk.dmg -o anydesk.dmg
           
-          # Check size >= 20MB (26.1MB thật)
           FILE_SIZE=$(stat -f%z anydesk.dmg 2>/dev/null || stat -c%s anydesk.dmg || echo 0)
-          if [ ! -f anydesk.dmg ] || [ "$FILE_SIZE" -lt 20000000 ]; then
-            echo "Download fail hoặc file nhỏ quá ($FILE_SIZE bytes)."
-            ls -lh anydesk.dmg || true
-            exit 1
+          if [ "$FILE_SIZE" -lt 20000000 ]; then
+            echo "Download fail ($FILE_SIZE bytes)"; ls -lh anydesk.dmg; exit 1
           fi
           echo "Download OK: $(du -sh anydesk.dmg)"
 
-      - name: Mount DMG và copy AnyDesk.app
+      - name: Mount và copy AnyDesk.app
         run: |
-          hdiutil attach anydesk.dmg -nobrowse -quiet || { echo "Attach DMG fail"; exit 1; }
-          sudo cp -R "/Volumes/AnyDesk/AnyDesk.app" /Applications/ || true
-          hdiutil detach "/Volumes/AnyDesk" -quiet || true
-          rm -f anydesk.dmg
-          echo "AnyDesk.app copied to /Applications"
+          hdiutil attach anydesk.dmg -nobrowse -quiet || { echo "Attach fail"; exit 1; }
+          sudo cp -R "/Volumes/AnyDesk/AnyDesk.app" /Applications/
+          hdiutil detach "/Volumes/AnyDesk" -quiet
+          rm anydesk.dmg
+          ls -l /Applications/AnyDesk.app
 
-      - name: Start AnyDesk client/service (init trước set password)
+      - name: Debug start AnyDesk (thử nhiều cách init service/client)
         run: |
-          # Start service background (nếu fail headless thì ignore)
-          sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --service > anydesk_service.log 2>&1 || true
-          sleep 10
-          # Start client nohup để connect server
-          nohup /Applications/AnyDesk.app/Contents/MacOS/AnyDesk > anydesk_client.log 2>&1 &
-          sleep 15
-          cat anydesk_service.log anydesk_client.log || true
-          echo "AnyDesk started (ignore service error nếu headless)"
+          echo "Thử start service..."
+          sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --service > service.log 2>&1 || true
+          sleep 5
+          
+          echo "Thử start client background..."
+          nohup /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --verbose > client.log 2>&1 &
+          CLIENT_PID=$!
+          sleep 20
+          
+          echo "=== Service log ==="
+          cat service.log || true
+          echo "=== Client log ==="
+          cat client.log || true
+          ps aux | grep AnyDesk || echo "No AnyDesk process running"
+          echo "Client PID: $CLIENT_PID (nếu >0 thì đang chạy)"
 
-      - name: Set unattended password (auto accept khi connect đúng pass)
+      - name: Thử set unattended password (ignore fail headless)
         run: |
-          PASSWORD="MatKhau123!@#"  # Thay pass mạnh, dài >12 ký tự
-          echo "$PASSWORD" | sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --set-password || {
-            echo "Set password fail (thường do headless runner không connect service được)."
-            echo "Nhưng trên máy thật sẽ OK sau khi cấp quyền Accessibility/Screen Recording."
-            sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --set-password --verbose || true
-          }
-          echo "Password unattended: $PASSWORD (auto accept nếu service sống)"
+          PASSWORD="MatKhau123!@#"
+          echo "$PASSWORD" | sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --set-password > setpw.log 2>&1 || true
+          sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --set-password --verbose >> setpw.log 2>&1 || true
+          cat setpw.log || true
+          echo "Password attempt: $PASSWORD (check nếu có 'success' trong log)"
 
-      - name: Lấy AnyDesk ID (mã connect từ xa)
+      - name: Lấy AnyDesk ID (nếu client connect được)
         run: |
-          ID=$(sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --get-id | grep -o '[0-9 ]\{9,11\}' || echo "ID chưa có (cần connect server)")
+          ID=$(sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --get-id | grep -o '[0-9 ]\{9,11\}' || echo "ID not generated (service/client not connected)")
           echo "AnyDesk ID: $ID"
-          echo "Connect từ máy khác: Nhập ID này + pass $PASSWORD → auto full control (nếu unattended enabled)"
-          echo "Lưu ý: Trên runner GitHub headless → màn hình đen/limited, dùng cho test ID. Trên máy thật: Cấp quyền thủ công lần đầu."
+          echo "Nếu ID có, connect từ máy khác + pass $PASSWORD → thử auto accept"
 
-      - name: Keep alive (giữ job sống để AnyDesk active)
+      - name: Keep alive (nếu ID có thì dùng được)
         run: |
-          echo "AnyDesk unattended running... Re-run workflow nếu cần refresh."
           while true; do
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] AnyDesk alive | ID: $ID | Pass: $PASSWORD"
+            echo "[$(date)] AnyDesk debug alive | ID: $ID | Pass: MatKhau123!@#"
             sleep 300
           done
