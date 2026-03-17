@@ -1,75 +1,46 @@
-name: macOS VNC + Pinggy TCP Tunnel (Keep Alive - Free No Card)
+name: macOS AnyDesk Unattended Access + Keep Alive
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # Chạy thủ công từ Actions tab
 
 jobs:
-  remote-desktop:
+  anydesk-setup:
     runs-on: macos-latest
-    timeout-minutes: 360
+    timeout-minutes: 360  # Max 6h free tier
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repo (nếu cần file thêm)
         uses: actions/checkout@v4
 
-      - name: Tạo user blender + add admin rights
+      - name: Tải và install AnyDesk silent (DMG -> copy app)
         run: |
-          USER="blender"
-          PASS="123456Hi"
-          
-          if dscl . -read "/Users/$USER" >/dev/null 2>&1; then
-            echo "User $USER đã tồn tại."
-          else
-            echo "Tạo user $USER..."
-            sudo dscl . -create "/Users/$USER"
-            sudo dscl . -create "/Users/$USER" UserShell /bin/zsh
-            sudo dscl . -create "/Users/$USER" RealName "$USER"
-            sudo dscl . -create "/Users/$USER" UniqueID $(($(dscl . -list /Users UniqueID | awk '{print $2}' | sort -ug | tail -1)+1))
-            sudo dscl . -create "/Users/$USER" PrimaryGroupID 20
-            sudo dscl . -create "/Users/$USER" NFSHomeDirectory "/Users/$USER"
-            sudo dscl . -passwd "/Users/$USER" "$PASS"
-            sudo mkdir -p "/Users/$USER"
-            sudo chown -R "$USER":staff "/Users/$USER"
-            sudo chmod 755 "/Users/$USER"
-          fi
-          
-          sudo dseditgroup -o edit -a "$USER" -t user admin
-          sudo dseditgroup -o edit -a "$USER" -t user wheel
-          echo "$USER là admin/super-user."
+          curl -L -o AnyDesk.dmg https://download.anydesk.com/AnyDesk.dmg
+          hdiutil attach AnyDesk.dmg -nobrowse -quiet
+          sudo cp -R "/Volumes/AnyDesk/AnyDesk.app" /Applications/
+          hdiutil detach "/Volumes/AnyDesk" -quiet
+          echo "AnyDesk installed to /Applications/AnyDesk.app"
 
-      - name: Enable VNC / Screen Sharing port 5900
+      - name: Set unattended access password (auto accept khi connect)
         run: |
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -activate -configure -access -on -privs -all \
-            -clientopts -setvncpw -vncpw "123456Hi" -clientopts -setvnclegacy -vnclegacy yes \
-            -restart -agent || true
-          
-          sudo defaults write /var/db/launchd.db/com.apple.launchd/overrides.plist com.apple.screensharing -dict Disabled -bool false
-          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist || true
-          
-          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.RemoteDesktop.plist || true
-          
-          echo "VNC port 5900 enabled. User: blender / Pass: 123456Hi"
+          PASSWORD="MatKhau123!@#"  # Thay pass mạnh của mày
+          echo "$PASSWORD" | sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --set-password
+          echo "Password unattended set: $PASSWORD (auto accept khi connect đúng pass)"
 
-      - name: Mở port 5900 firewall
+      - name: Lấy AnyDesk ID (mã connect)
         run: |
-          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add /System/Library/CoreServices/RemoteManagement/ARDAgent.app || true
-          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp /System/Library/CoreServices/RemoteManagement/ARDAgent.app || true
-          echo "Port 5900 opened."
+          ID=$(sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --get-id | grep -o '[0-9 ]\{9,11\}')
+          echo "AnyDesk ID: $ID"
+          echo "Connect từ máy khác: Nhập ID này + pass MatKhau123!@# là auto vào full control"
 
-      - name: Start Pinggy TCP tunnel to port 5900 + display address
+      - name: Start AnyDesk service background (chạy khi logout/reboot nếu máy thật)
         run: |
-          # Pinggy TCP command (free, no install, dùng ssh built-in)
-          ssh -p 443 -R0:localhost:5900 tcp@a.pinggy.io > pinggy.log 2>&1 &
-          sleep 10  # Chờ output
-          cat pinggy.log | grep -o 'tcp://.*' || echo "Pinggy address: Check full log for tcp://xxxx.a.pinggy.link:YYYYY"
-          echo "Connect VNC tới tcp://xxxx.a.pinggy.link:YYYYY (thay bằng address thực) với user blender / pass 123456Hi"
-          echo "Ví dụ: vnc://xxxx.a.pinggy.link:YYYYY (port là số sau :)"
+          sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --service || true
+          echo "AnyDesk service started (background mode)"
 
-      - name: Keep Alive loop
+      - name: Keep alive loop (giữ job sống để AnyDesk active)
         run: |
-          echo "Keep alive: Tunnel sống đến khi cancel hoặc hết 6h."
+          echo "AnyDesk unattended active... Job giữ 6h max, re-run khi gần hết."
           while true; do
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Pinggy tunnel vẫn active. Re-run nếu cần refresh."
-            sleep 300
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] AnyDesk vẫn sống. ID: $ID | Pass: MatKhau123!@#"
+            sleep 300  # In log mỗi 5 phút
           done
