@@ -1,24 +1,91 @@
-name: MacRDP
-on: 
-  workflow_dispatch:
+name: macOS VNC + Ngrok TCP Tunnel (Keep Alive)
+
+on:
+  workflow_dispatch:  # Chạy thủ công từ Actions tab (không cần push)
+
 jobs:
-  build:
-    name: MacRDP
-    runs-on: macos-latest
-    
-    steps:                 
-    - name: Enabling Remote Access
-      env:
-        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
-      run: |
-          curl -s -o start.sh -L "https://raw.githubusercontent.com/quickyung-dev2/hello/refs/heads/main/.github/workflows/start.sh"
-          chmod +x start.sh
-          bash start.sh "$NGROK_AUTH_TOKEN"
+  remote-desktop:
+    runs-on: macos-latest  # macos-14 hoặc macos-15 nếu muốn version mới
+
+    timeout-minutes: 360  # Max 6h (default GitHub limit free tier), set cao nhất có thể
+
+    steps:
+      - name: Checkout repository (nếu cần file/script thêm)
+        uses: actions/checkout@v4
+
+      - name: Tạo user blender + add admin rights
+        run: |
+          USER="blender"
+          PASS="123456Hi"
           
-    - name: Log In Details To VNC Server
-      run: |
-         chmod +x login.sh
-         bash login.sh
-         
-    - name: MacOS System running...
-      uses: mxschmitt/action-tmate@v2
+          if dscl . -read "/Users/$USER" >/dev/null 2>&1; then
+            echo "User $USER đã tồn tại."
+          else
+            echo "Tạo user $USER..."
+            sudo dscl . -create "/Users/$USER"
+            sudo dscl . -create "/Users/$USER" UserShell /bin/zsh
+            sudo dscl . -create "/Users/$USER" RealName "$USER"
+            sudo dscl . -create "/Users/$USER" UniqueID $(($(dscl . -list /Users UniqueID | awk '{print $2}' | sort -ug | tail -1)+1))
+            sudo dscl . -create "/Users/$USER" PrimaryGroupID 20
+            sudo dscl . -create "/Users/$USER" NFSHomeDirectory "/Users/$USER"
+            sudo dscl . -passwd "/Users/$USER" "$PASS"
+            sudo mkdir -p "/Users/$USER"
+            sudo chown -R "$USER":staff "/Users/$USER"
+            sudo chmod 755 "/Users/$USER"
+          fi
+          
+          sudo dseditgroup -o edit -a "$USER" -t user admin
+          sudo dseditgroup -o edit -a "$USER" -t user wheel
+          echo "$USER là admin/super-user."
+
+      - name: Enable VNC / Screen Sharing port 5900
+        run: |
+          # Kickstart ARD + VNC legacy + set password
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -configure -access -on -privs -all \
+            -clientopts -setvncpw -vncpw "123456Hi" -clientopts -setvnclegacy -vnclegacy yes \
+            -restart -agent || true
+          
+          # Fallback enable screensharing plist
+          sudo defaults write /var/db/launchd.db/com.apple.launchd/overrides.plist com.apple.screensharing -dict Disabled -bool false
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist || true
+          
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.RemoteDesktop.plist || true
+          
+          echo "VNC port 5900 enabled. User: blender / Pass: 123456Hi"
+
+      - name: Install Homebrew nếu chưa có
+        run: |
+          if ! command -v brew &> /dev/null; then
+            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+            eval "$(/opt/homebrew/bin/brew shellenv)"
+          fi
+
+      - name: Install & config ngrok
+        run: |
+          brew install ngrok/ngrok/ngrok || brew upgrade ngrok
+          ngrok config add-authtoken 3B4Y4UvXyvqxKz3WaJWAOJ28yGR_7aU6Gz8TKPKj4sf5K3qCp
+          echo "Ngrok authtoken added."
+
+      - name: Mở port 5900 firewall
+        run: |
+          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add /System/Library/CoreServices/RemoteManagement/ARDAgent.app || true
+          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp /System/Library/CoreServices/RemoteManagement/ARDAgent.app || true
+          echo "Port 5900 opened."
+
+      - name: Start ngrok TCP tunnel + display address
+        run: |
+          ngrok tcp 5900 --log=stdout > ngrok.log &
+          sleep 15
+          cat ngrok.log | grep -o 'tcp://.*' || echo "Ngrok address sẽ hiện trong log đầy đủ (check Actions log)."
+          echo "Connect VNC tới address:port trên với user blender / pass 123456Hi"
+
+      - name: Keep Alive (loop vô hạn để job không die)
+        run: |
+          echo "Bắt đầu keep alive loop... Job sẽ chạy đến khi bạn cancel hoặc hết 6h."
+          echo "Re-run workflow khi gần timeout để tiếp tục tunnel."
+          while true; do
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Tunnel vẫn sống... Connect VNC ongoing."
+            sleep 300  # 5 phút in log 1 lần để thấy activity
+          done
